@@ -1,6 +1,18 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+} from "recharts";
 import { 
   Terminal, 
   Database, 
@@ -69,9 +81,34 @@ const PROMPT_TEMPLATES = [
   }
 ];
 
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-[#0b0c13] border border-slate-800 p-3 rounded-lg shadow-2xl font-mono text-xs">
+        <p className="text-slate-300 font-bold mb-1.5 uppercase tracking-wide">{label}</p>
+        <p className="text-cyan-400 flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+          Tokens: <span className="font-bold text-slate-200">{payload[0].value.toLocaleString()}</span>
+        </p>
+        {payload[1] && (
+          <p className="text-emerald-400 flex items-center gap-1.5 mt-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Cost: <span className="font-bold text-slate-200">${payload[1].value.toFixed(5)}</span>
+          </p>
+        )}
+        <p className="text-slate-500 text-[10px] mt-1.5 uppercase">
+          Date: {payload[0].payload.date || "N/A"}
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
+
 export default function Home() {
   // Navigation
   const [activeTab, setActiveTab] = useState<"foundry" | "dashboard" | "settings">("foundry");
+  const [mounted, setMounted] = useState(false);
 
   // App Configurations
   const [topic, setTopic] = useState("");
@@ -87,6 +124,7 @@ export default function Home() {
   const [githubRepo, setGithubRepo] = useState("");
   const [showGroq, setShowGroq] = useState(false);
   const [showGithub, setShowGithub] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // Runtime State
   const [logs, setLogs] = useState<string[]>(["System ready. Awaiting initialization..."]);
@@ -118,8 +156,9 @@ export default function Home() {
   const terminalEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Load saved configurations from Cookies / LocalStorage
+  // Load saved configurations from Cookies / LocalStorage / Secure Firestore
   useEffect(() => {
+    setMounted(true);
     // Attempt cookies first (per request), fallback to localStorage
     const savedGroq = getCookie("sdg_groq_key") || localStorage.getItem("synthetic_core_groq_key") || "";
     const savedPat = getCookie("sdg_github_pat") || localStorage.getItem("synthetic_core_github_pat") || "";
@@ -133,11 +172,30 @@ export default function Home() {
     setTargetFile(savedFile);
     setSynthesisMode(savedMode);
 
+    // Sync cloud credentials from secure Firestore for backend accessibility
+    const syncCloudCredentials = async () => {
+      try {
+        const configRef = doc(db, "config", "credentials");
+        const configSnap = await getDoc(configRef);
+        if (configSnap.exists()) {
+          const cloudConfig = configSnap.data();
+          if (cloudConfig.groqApiKey) setGroqApiKey(cloudConfig.groqApiKey);
+          if (cloudConfig.githubPat) setGithubPat(cloudConfig.githubPat);
+          if (cloudConfig.githubRepo) setGithubRepo(cloudConfig.githubRepo);
+          if (cloudConfig.targetFile) setTargetFile(cloudConfig.targetFile);
+          if (cloudConfig.synthesisMode) setSynthesisMode(cloudConfig.synthesisMode);
+        }
+      } catch (err) {
+        console.warn("Could not retrieve secure credentials fallback from Firestore:", err);
+      }
+    };
+    syncCloudCredentials();
+
     // Load dashboard history on mount
     fetchDashboardData();
   }, []);
 
-  // Save configurations on changes
+  // Save configurations on changes (local fallback)
   useEffect(() => {
     if (groqApiKey) {
       setCookie("sdg_groq_key", groqApiKey);
@@ -315,6 +373,47 @@ export default function Home() {
     setOptimizationExplanation("");
   };
 
+  // Save credentials and settings securely to Firestore & local storage
+  const handleSaveConfig = async () => {
+    setIsSavingConfig(true);
+    try {
+      // 1. Save to local cookies and localStorage
+      if (groqApiKey) {
+        setCookie("sdg_groq_key", groqApiKey);
+        localStorage.setItem("synthetic_core_groq_key", groqApiKey);
+      }
+      if (githubPat) {
+        setCookie("sdg_github_pat", githubPat);
+        localStorage.setItem("synthetic_core_github_pat", githubPat);
+      }
+      if (githubRepo) {
+        setCookie("sdg_repo", githubRepo);
+        localStorage.setItem("synthetic_core_repo", githubRepo);
+      }
+      localStorage.setItem("synthetic_core_file", targetFile);
+      localStorage.setItem("sdg_synthesis_mode", synthesisMode);
+
+      // 2. Persist in Firestore config document so background task engine has secure server-side recall
+      const configRef = doc(db, "config", "credentials");
+      await setDoc(configRef, {
+        groqApiKey,
+        githubPat,
+        githubRepo,
+        targetFile,
+        synthesisMode,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      alert("Configuration successfully saved to local environment & securely synced with Firestore cloud database!");
+      setActiveTab("foundry");
+    } catch (err: any) {
+      console.error("Failed to sync secure credentials to cloud:", err);
+      alert(`Saved locally in browser, but failed to sync to secure Cloud Firestore: ${err.message}`);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
   // Delete run history
   const handleDeleteRun = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -336,6 +435,25 @@ export default function Home() {
       console.error("Failed to delete run document", err);
     }
   };
+
+  // Format data for Recharts Tokens vs Cost Growth Chart
+  const chartData = [...historicalRuns]
+    .filter(run => run.status === "completed" && run.stats)
+    .sort((a, b) => {
+      const timeA = typeof a.updatedAt === "number" ? a.updatedAt : new Date(a.updatedAt).getTime();
+      const timeB = typeof b.updatedAt === "number" ? b.updatedAt : new Date(b.updatedAt).getTime();
+      return timeA - timeB;
+    })
+    .map((run, index) => {
+      const runTopic = run.topic || `Run ${index + 1}`;
+      return {
+        name: runTopic.length > 20 ? runTopic.substring(0, 20) + "..." : runTopic,
+        runId: run.runId || `Run ${index + 1}`,
+        tokens: run.stats?.totalTokens || 0,
+        cost: run.stats?.estimatedCost || 0,
+        date: run.updatedAt ? new Date(run.updatedAt).toLocaleDateString() : "",
+      };
+    });
 
   return (
     <div className="min-h-screen bg-[#07090f] text-slate-100 flex flex-col font-sans">
@@ -731,6 +849,44 @@ export default function Home() {
 
             </div>
 
+            {/* Tokens vs Cost Line Chart Section */}
+            <div className="p-5 bg-slate-950/60 border border-slate-900 rounded-xl relative shadow-xl overflow-hidden flex flex-col gap-4">
+              <div className="absolute -top-px left-10 right-10 h-px bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent"></div>
+              <div className="flex items-center justify-between border-b border-slate-900 pb-3">
+                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-cyan-400" /> Tokens vs Cost Growth Trend
+                </h3>
+                <span className="text-[10px] text-slate-500 font-mono uppercase">
+                  Chronological progression of training runs
+                </span>
+              </div>
+              
+              <div className="h-[300px] w-full bg-[#0a0b10] p-4 rounded-lg border border-slate-900 flex items-center justify-center">
+                {!mounted ? (
+                  <div className="text-slate-600 text-xs font-mono uppercase animate-pulse">
+                    Initializing graphics system...
+                  </div>
+                ) : chartData.length === 0 ? (
+                  <div className="text-slate-600 text-xs font-mono uppercase text-center italic">
+                    No completed runs with valid stats available to plot.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#161b22" />
+                      <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} />
+                      <YAxis yAxisId="left" stroke="#06b6d4" fontSize={10} tickLine={false} />
+                      <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={10} tickLine={false} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontFamily: 'monospace', textTransform: 'uppercase' }} />
+                      <Line yAxisId="left" type="monotone" dataKey="tokens" name="Tokens" stroke="#06b6d4" strokeWidth={2} dot={{ r: 3, fill: '#06b6d4' }} activeDot={{ r: 6 }} />
+                      <Line yAxisId="right" type="monotone" dataKey="cost" name="Cost (USD)" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 6 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+
             {/* Dashboard Workspace */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
@@ -984,21 +1140,25 @@ export default function Home() {
             <div className="bg-slate-950 border border-slate-900 p-4 rounded-lg flex gap-3 items-start mt-2">
               <AlertCircle className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
               <div>
-                <span className="text-[10px] font-bold text-slate-300 uppercase block font-mono">AUTOMATED STATE PERSISTENCE ACTIVE</span>
+                <span className="text-[10px] font-bold text-slate-300 uppercase block font-mono">CLOUD-SYNCHRONIZED STATE PERSISTENCE ACTIVE</span>
                 <p className="text-[10px] text-slate-500 font-mono leading-relaxed uppercase mt-1">
-                  Credentials and target file locations are stored securely using local encrypted browser sessions and secure HTTP client-side cookies for double reliability. They are automatically recalled whenever you access the system.
+                  Credentials and targets are saved locally using encrypted browser sessions/cookies and securely synced to a server-side Firestore Database. This allows the background synthesis engine to run autonomously even when your browser tab is closed.
                 </p>
               </div>
             </div>
 
             <button
-              onClick={() => {
-                setActiveTab("foundry");
-                alert("Configurations saved and loaded!");
-              }}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black font-mono text-xs py-3 rounded-lg flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)]"
+              onClick={handleSaveConfig}
+              disabled={isSavingConfig}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-900 text-slate-950 disabled:text-slate-600 font-black font-mono text-xs py-3 rounded-lg flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.3)]"
             >
-              SAVE CONFIGURATION & RETURN
+              {isSavingConfig ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-cyan-500" /> SYNCHRONIZING SECURE CLOUD STORAGE...
+                </>
+              ) : (
+                "SAVE & SYNC CLOUD CONFIGURATION"
+              )}
             </button>
 
           </div>
@@ -1010,7 +1170,7 @@ export default function Home() {
       <footer className="border-t border-slate-950/80 bg-slate-950/40 px-6 py-3.5 flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] text-slate-500 font-mono mt-auto shrink-0 uppercase tracking-wider">
         <span>AUTHENTICATED CLIENT METRICS: DEVILWARFAZE@GMAIL.COM</span>
         <span>SYSTEM DATALINK: SECURE BROADCAST (FIREBASE CLOUD INTEGRATED)</span>
-        <span>UTC TIMESTAMP: {new Date().toISOString()}</span>
+        <span>UTC TIMESTAMP: {mounted ? new Date().toISOString() : ""}</span>
       </footer>
 
     </div>

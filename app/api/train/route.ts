@@ -215,15 +215,37 @@ export async function POST(req: NextRequest) {
         estimatedCost += cost;
       }
 
+      // Fallback configuration resolution from Firestore
+      let resolvedGroqKey = groq_key;
+      let resolvedGithubToken = github_token;
+      let resolvedTargetRepo = target_repo;
+      let resolvedFilePath = file_path;
+      let resolvedSynthesisMode = synthesis_mode || synthesisMode || "balanced";
+
       try {
-        if (!massive_context || !groq_key || !github_token || !target_repo || !file_path) {
-          throw new Error("Missing required configuration fields.");
+        const configRef = doc(db, "config", "credentials");
+        const configSnap = await getDoc(configRef);
+        if (configSnap.exists()) {
+          const cloudConfig = configSnap.data();
+          if (!resolvedGroqKey) resolvedGroqKey = cloudConfig.groqApiKey;
+          if (!resolvedGithubToken) resolvedGithubToken = cloudConfig.githubPat;
+          if (!resolvedTargetRepo) resolvedTargetRepo = cloudConfig.githubRepo;
+          if (!resolvedFilePath) resolvedFilePath = cloudConfig.targetFile;
+          if (!synthesis_mode && !synthesisMode) resolvedSynthesisMode = cloudConfig.synthesisMode || resolvedSynthesisMode;
+        }
+      } catch (err) {
+        console.warn("Failed to retrieve fallback config from Firestore:", err);
+      }
+
+      try {
+        if (!massive_context || !resolvedGroqKey || !resolvedGithubToken || !resolvedTargetRepo || !resolvedFilePath) {
+          throw new Error("Missing required configuration fields. Ensure they are configured in settings or sent with the request.");
         }
 
         log(`Initializing Dataset Synthesis run ${resolvedRunId}...`);
         await updateFirestore("running");
 
-        const mode = synthesis_mode || synthesisMode || "balanced";
+        const mode = resolvedSynthesisMode;
         let temperature = 0.6;
         let top_p = 0.9;
         if (mode === "exploratory") {
@@ -240,12 +262,12 @@ export async function POST(req: NextRequest) {
         const debateHistory: GroqMessage[] = [];
 
         log("Checking remote storage on GitHub for existing state...");
-        const githubApiUrl = `https://api.github.com/repos/${target_repo}/contents/${file_path}`;
+        const githubApiUrl = `https://api.github.com/repos/${resolvedTargetRepo}/contents/${resolvedFilePath}`;
         
         try {
           const getFileRes = await fetch(githubApiUrl, {
             headers: {
-              'Authorization': `token ${github_token}`,
+              'Authorization': `token ${resolvedGithubToken}`,
               'Accept': 'application/vnd.github.v3+json',
               'User-Agent': 'Synthetic-Data-Generator'
             }
@@ -333,7 +355,7 @@ export async function POST(req: NextRequest) {
             messages,
             temperature,
             top_p
-          }, groq_key, log);
+          }, resolvedGroqKey, log);
         
           const teacherAnswer = response.choices[0].message.content;
           trackUsage(TEACHER_MODEL, response.usage);
@@ -344,7 +366,7 @@ export async function POST(req: NextRequest) {
             metadata: { phase: 1, angle } 
           });
           
-          await commitToGithub(dataStr, `Append synthesis for angle: ${angle}`, `angle ${angle}`, target_repo, file_path, github_token, log);
+          await commitToGithub(dataStr, `Append synthesis for angle: ${angle}`, `angle ${angle}`, resolvedTargetRepo, resolvedFilePath, resolvedGithubToken, log);
           log(`Phase 1 - Angle ${i + 1} completed.`);
           
           await updateFirestore("running", { completedAngles: selectedAngles.slice(0, i + 1) });
@@ -355,7 +377,7 @@ export async function POST(req: NextRequest) {
         
         const debateRounds = parseInt(synthesis_rounds || "3");
         log(`Commencing Phase 2: Interrogative Debate for ${debateRounds} rounds...`);
-
+ 
         for (let r = 0; r < debateRounds; r++) {
           if (r < completedDebateRounds) {
             log(`Phase 2 - Debate Round ${r + 1} already exists on GitHub. Skipping.`);
@@ -380,7 +402,7 @@ export async function POST(req: NextRequest) {
             messages: studentMessages,
             temperature: 0.8,
             top_p: 0.9
-          }, groq_key, log);
+          }, resolvedGroqKey, log);
           
           const question = studentResponse.choices[0].message.content;
           trackUsage(STUDENT_MODEL, studentResponse.usage);
@@ -399,7 +421,7 @@ export async function POST(req: NextRequest) {
             messages: teacherMessages,
             temperature,
             top_p
-          }, groq_key, log);
+          }, resolvedGroqKey, log);
           
           const answer = teacherResponse.choices[0].message.content;
           trackUsage(TEACHER_MODEL, teacherResponse.usage);
@@ -413,7 +435,7 @@ export async function POST(req: NextRequest) {
             metadata: { phase: 2, round: r + 1 } 
           });
           
-          await commitToGithub(dataStr, `Append debate round ${r + 1}`, `debate round ${r + 1}`, target_repo, file_path, github_token, log);
+          await commitToGithub(dataStr, `Append debate round ${r + 1}`, `debate round ${r + 1}`, resolvedTargetRepo, resolvedFilePath, resolvedGithubToken, log);
           log(`Phase 2 - Debate Round ${r + 1} completed.`);
           
           await updateFirestore("running", { completedRounds: r + 1, totalRounds: debateRounds });
