@@ -117,6 +117,17 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: [${time}] - ${message}\n\n`));
       }
 
+      const runStats = {
+        apiCalls: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cost: 0
+      };
+
+      function logStats() {
+        controller.enqueue(encoder.encode(`data: [STATS] - ${JSON.stringify(runStats)}\n\n`));
+      }
+
       try {
         log("Initialization started... Orchestrating environment.");
         
@@ -147,6 +158,17 @@ export async function POST(req: NextRequest) {
           }, groq_key, log);
         
           const teacherAnswer = response.choices[0].message.content;
+          
+          // Update Stats
+          if (response?.usage) {
+            const pTokens = response.usage.prompt_tokens || 0;
+            const cTokens = response.usage.completion_tokens || 0;
+            runStats.apiCalls += 1;
+            runStats.promptTokens += pTokens;
+            runStats.completionTokens += cTokens;
+            runStats.cost += (pTokens * 0.59 + cTokens * 0.79) / 1000000;
+            logStats();
+          }
           
           const dataStr = JSON.stringify({ messages: [...messages, { role: "assistant", content: teacherAnswer }] });
           await commitToGithub(dataStr, `Append synthesis for angle: ${angle}`, `angle ${angle}`, target_repo, file_path, github_token, log);
@@ -182,6 +204,18 @@ export async function POST(req: NextRequest) {
             }, groq_key, log);
         
             const question = studentResponse.choices[0].message.content;
+            
+            // Update Stats for Student
+            if (studentResponse?.usage) {
+              const pTokens = studentResponse.usage.prompt_tokens || 0;
+              const cTokens = studentResponse.usage.completion_tokens || 0;
+              runStats.apiCalls += 1;
+              runStats.promptTokens += pTokens;
+              runStats.completionTokens += cTokens;
+              runStats.cost += (pTokens * 0.05 + cTokens * 0.08) / 1000000;
+              logStats();
+            }
+
             log(`Phase 2 - Student asks: "${question.substring(0, 70).replace(/\n/g, ' ')}..."`);
             
             log(`Phase 2 - Teacher is synthesizing response...`);
@@ -199,6 +233,17 @@ export async function POST(req: NextRequest) {
         
             const answer = teacherResponse.choices[0].message.content;
             
+            // Update Stats for Teacher
+            if (teacherResponse?.usage) {
+              const pTokens = teacherResponse.usage.prompt_tokens || 0;
+              const cTokens = teacherResponse.usage.completion_tokens || 0;
+              runStats.apiCalls += 1;
+              runStats.promptTokens += pTokens;
+              runStats.completionTokens += cTokens;
+              runStats.cost += (pTokens * 0.59 + cTokens * 0.79) / 1000000;
+              logStats();
+            }
+
             debateHistory.push({ role: "user", content: question });
             debateHistory.push({ role: "assistant", content: answer });
             

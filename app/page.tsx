@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity, ChevronDown } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity, ChevronDown, Eye, EyeOff } from "lucide-react";
 
 const PROMPT_TEMPLATES = [
   {
@@ -33,6 +33,16 @@ export default function SyntheticDataGenerator() {
   const [isRunning, setIsRunning] = useState(false);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showGithubPat, setShowGithubPat] = useState(false);
+  const [stats, setStats] = useState({
+    apiCalls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cost: 0
+  });
+
   useEffect(() => {
     setTopic(localStorage.getItem("sdg_topic") || "");
     setNumAngles(Number(localStorage.getItem("sdg_numAngles")) || 3);
@@ -40,16 +50,18 @@ export default function SyntheticDataGenerator() {
     setGroqApiKey(localStorage.getItem("synthetic_core_groq_key") || "");
     setGithubPat(localStorage.getItem("synthetic_core_github_pat") || "");
     setGithubRepo(localStorage.getItem("synthetic_core_repo") || "");
+    setIsLoaded(true);
   }, []);
 
   useEffect(() => {
+    if (!isLoaded) return;
     localStorage.setItem("sdg_topic", topic);
     localStorage.setItem("sdg_numAngles", numAngles.toString());
     localStorage.setItem("sdg_context", context);
     localStorage.setItem("synthetic_core_groq_key", groqApiKey);
     localStorage.setItem("synthetic_core_github_pat", githubPat);
     localStorage.setItem("synthetic_core_repo", githubRepo);
-  }, [topic, numAngles, context, groqApiKey, githubPat, githubRepo]);
+  }, [topic, numAngles, context, groqApiKey, githubPat, githubRepo, isLoaded]);
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,6 +75,12 @@ export default function SyntheticDataGenerator() {
     
     setIsRunning(true);
     setLogs([`[${new Date().toLocaleTimeString()}]: Validating context volume...`]);
+    setStats({
+      apiCalls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cost: 0
+    });
     
     const topicSlug = topic.toLowerCase().replace(/[^a-z0-9]+/g, '_');
     const targetFile = `training_data/${topicSlug}.jsonl`;
@@ -98,12 +116,22 @@ export default function SyntheticDataGenerator() {
         done = doneReading;
         if (value) {
           buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\\n\\n');
+          const parts = buffer.split('\n\n');
           buffer = parts.pop() || '';
           
           for (const part of parts) {
             if (part.startsWith('data: ')) {
-              setLogs(prev => [...prev, part.substring(6)]);
+              const dataContent = part.substring(6);
+              if (dataContent.startsWith('[STATS] - ')) {
+                try {
+                  const statsObj = JSON.parse(dataContent.substring(10));
+                  setStats(statsObj);
+                } catch (e) {
+                  // Ignore JSON parsing issues
+                }
+              } else {
+                setLogs(prev => [...prev, dataContent]);
+              }
             }
           }
         }
@@ -251,24 +279,42 @@ export default function SyntheticDataGenerator() {
 
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1 flex items-center gap-1"><Key className="w-3 h-3"/> Groq API Key</label>
-                <input
-                  type="password"
-                  value={groqApiKey}
-                  onChange={e => setGroqApiKey(e.target.value)}
-                  placeholder="gsk_..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50 font-mono"
-                />
+                <div className="relative">
+                  <input
+                    type={showGroqKey ? "text" : "password"}
+                    value={groqApiKey}
+                    onChange={e => setGroqApiKey(e.target.value)}
+                    placeholder="gsk_..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 pr-10 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGroqKey(!showGroqKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 focus:outline-none"
+                  >
+                    {showGroqKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1 flex items-center gap-1"><Github className="w-3 h-3"/> GitHub PAT</label>
-                <input
-                  type="password"
-                  value={githubPat}
-                  onChange={e => setGithubPat(e.target.value)}
-                  placeholder="ghp_..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50 font-mono"
-                />
+                <div className="relative">
+                  <input
+                    type={showGithubPat ? "text" : "password"}
+                    value={githubPat}
+                    onChange={e => setGithubPat(e.target.value)}
+                    placeholder="ghp_..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 pr-10 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGithubPat(!showGithubPat)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 focus:outline-none"
+                  >
+                    {showGithubPat ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -297,14 +343,23 @@ export default function SyntheticDataGenerator() {
           </div>
 
            <div className="grid grid-cols-2 gap-4 mt-auto">
-              <div className="bg-[#0a0c12] rounded-xl border border-white/5 p-4 flex flex-col justify-center items-center gap-2 shadow-2xl">
-                <div className="text-[10px] text-slate-500 uppercase tracking-widest text-center">Dataset Size</div>
-                <div className="text-xl font-bold text-white flex items-center gap-1"><Database className="w-5 h-5 text-emerald-400"/> JSONL</div>
+              <div className="bg-[#0a0c12] rounded-xl border border-white/5 p-4 flex flex-col justify-center items-center gap-1.5 shadow-2xl">
+                <div className="text-[10px] text-slate-500 uppercase tracking-widest text-center">API Steps Run</div>
+                <div className="text-lg font-bold text-white flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-cyan-400"/> {stats.apiCalls} Calls
+                </div>
+                <div className="text-[9px] text-emerald-400 uppercase tracking-wider font-mono">
+                  {(stats.promptTokens + stats.completionTokens).toLocaleString()} Tokens
+                </div>
               </div>
-              <div className="bg-[#0a0c12] rounded-xl border border-white/5 p-4 flex flex-col justify-center items-center gap-2 shadow-2xl">
-                <div className="text-[10px] text-slate-500 uppercase tracking-widest">Groq Cost</div>
-                <div className="text-xl font-bold text-white">$0.00</div>
-                <div className="text-[8px] text-cyan-400 uppercase tracking-widest">Free Tier</div>
+              <div className="bg-[#0a0c12] rounded-xl border border-white/5 p-4 flex flex-col justify-center items-center gap-1.5 shadow-2xl">
+                <div className="text-[10px] text-slate-500 uppercase tracking-widest">Estimated Cost</div>
+                <div className="text-lg font-bold text-white font-mono">
+                  ${stats.cost > 0 ? stats.cost.toFixed(5) : "0.00000"}
+                </div>
+                <div className="text-[9px] text-cyan-400 uppercase tracking-wider font-mono">
+                  Standard API Rates
+                </div>
               </div>
             </div>
         </aside>
