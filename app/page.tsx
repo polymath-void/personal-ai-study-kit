@@ -1,7 +1,25 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity } from "lucide-react";
+import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity, ChevronDown } from "lucide-react";
+
+const PROMPT_TEMPLATES = [
+  {
+    name: "Code Documentation",
+    topic: "RESTful Payment Gateway API",
+    context: "API reference for a RESTful payment gateway. Includes endpoints for creating charges, refunding transactions, and managing webhooks. Contains details on authentication headers, rate limits (1000 req/min), and standard error responses (400, 401, 403, 429, 500). Authentication uses Bearer tokens. Data payloads are JSON formatted."
+  },
+  {
+    name: "Medical Patient Logs",
+    topic: "Acute Respiratory Distress Patient Case",
+    context: "Anonymized clinical notes for a 45-year-old patient presenting with symptoms of acute respiratory distress. Includes vital signs history (temp: 38.5C, HR: 110 bpm, SpO2: 88%), prescribed medications (Albuterol, Dexamethasone), and physician's observations over a 48-hour hospital admission period showing gradual improvement with supplemental oxygen."
+  },
+  {
+    name: "Financial Analysis",
+    topic: "Tech Company Q3 Earnings",
+    context: "Quarterly earnings report for a mid-cap technology company. Highlights revenue growth of 22% in the cloud services division, increased operational costs due to $50M R&D investments in AI, and forward-looking guidance projecting a 15% YoY increase in profit margins. Net income stood at $120M for the quarter."
+  }
+];
 
 export default function SyntheticDataGenerator() {
   const [topic, setTopic] = useState("");
@@ -146,7 +164,28 @@ export default function SyntheticDataGenerator() {
             </div>
             
             <div className="flex-1 flex flex-col relative">
-              <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Raw Reference Context</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase">Raw Reference Context</label>
+                <div className="relative">
+                  <select
+                    onChange={(e) => {
+                      const tmpl = PROMPT_TEMPLATES[parseInt(e.target.value)];
+                      if (tmpl) {
+                        setTopic(tmpl.topic);
+                        setContext(tmpl.context);
+                      }
+                    }}
+                    className="bg-slate-900 border border-slate-800 rounded px-6 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-cyan-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Load Template...</option>
+                    {PROMPT_TEMPLATES.map((t, i) => (
+                      <option key={i} value={i}>{t.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
               <textarea
                 value={context}
                 onChange={e => setContext(e.target.value)}
