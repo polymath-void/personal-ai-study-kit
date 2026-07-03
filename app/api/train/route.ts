@@ -8,6 +8,8 @@ interface GroqMessage {
 interface GroqPayload {
   model: string;
   messages: GroqMessage[];
+  temperature?: number;
+  top_p?: number;
 }
 
 async function fetchGroq(body: GroqPayload, apiKey: string, log?: (msg: string) => void) {
@@ -106,7 +108,9 @@ export async function POST(req: NextRequest) {
     groq_key, 
     github_token, 
     target_repo, 
-    file_path 
+    file_path,
+    synthesis_mode,
+    synthesisMode
   } = body;
 
   const encoder = new TextEncoder();
@@ -135,12 +139,103 @@ export async function POST(req: NextRequest) {
           throw new Error("Missing required configuration fields.");
         }
 
+        const mode = synthesis_mode || synthesisMode || "balanced";
+        let temperature = 0.6;
+        let top_p = 0.9;
+        if (mode === "exploratory") {
+          temperature = 0.9;
+          top_p = 0.95;
+        } else if (mode === "rigorous") {
+          temperature = 0.2;
+          top_p = 0.8;
+        }
+        log(`Using Synthesis Mode: ${mode.toUpperCase()} (Temp: ${temperature}, Top_P: ${top_p})`);
+
+        let existingAngles: string[] = [];
+        let completedDebateRounds = 0;
+        const debateHistory: GroqMessage[] = [];
+
+        log("Checking remote storage on GitHub for existing state...");
+        const githubApiUrl = `https://api.github.com/repos/${target_repo}/contents/${file_path}`;
+        try {
+          const getFileRes = await fetch(githubApiUrl, {
+            headers: {
+              'Authorization': `token ${github_token}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'User-Agent': 'Synthetic-Data-Generator'
+            }
+          });
+
+          if (getFileRes.ok) {
+            const fileData = await getFileRes.json();
+            const existingContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
+            const lines = existingContent.split('\n').filter(Boolean);
+            
+            for (const line of lines) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed && Array.isArray(parsed.messages)) {
+                  // Metadata detection first
+                  if (parsed.metadata) {
+                    if (parsed.metadata.phase === 1 && parsed.metadata.angle) {
+                      existingAngles.push(parsed.metadata.angle);
+                    } else if (parsed.metadata.phase === 2) {
+                      completedDebateRounds++;
+                      const msgs = parsed.messages;
+                      const questionMsg = msgs[msgs.length - 2];
+                      const answerMsg = msgs[msgs.length - 1];
+                      if (questionMsg && answerMsg) {
+                        debateHistory.push({ role: "user", content: questionMsg.content });
+                        debateHistory.push({ role: "assistant", content: answerMsg.content });
+                      }
+                    }
+                  } else {
+                    // Fallback content-based detection
+                    const userMsg = parsed.messages.find((m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.includes("perspective of:"));
+                    if (userMsg) {
+                      const match = userMsg.content.match(/perspective of:\s*([^.]+)/);
+                      if (match && match[1]) {
+                        existingAngles.push(match[1].trim());
+                      }
+                    } else {
+                      const isDebate = parsed.messages.some((m: any) => m.role === 'system' && typeof m.content === 'string' && m.content.includes("interrogating a master model"));
+                      if (isDebate) {
+                        completedDebateRounds++;
+                        const msgs = parsed.messages;
+                        const questionMsg = msgs[msgs.length - 2];
+                        const answerMsg = msgs[msgs.length - 1];
+                        if (questionMsg && answerMsg) {
+                          debateHistory.push({ role: "user", content: questionMsg.content });
+                          debateHistory.push({ role: "assistant", content: answerMsg.content });
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                // Ignore individual parsing errors
+              }
+            }
+            log(`Detected existing progress: ${existingAngles.length} angles synthesized, ${completedDebateRounds} debate rounds completed.`);
+          } else if (getFileRes.status === 404) {
+            log("No existing dataset file found on GitHub. Starting a fresh run.");
+          } else {
+            log(`Could not verify existing state (GitHub status ${getFileRes.status}). Proceeding fresh.`);
+          }
+        } catch (error: any) {
+          log(`Error querying remote state: ${error.message}. Proceeding fresh.`);
+        }
+
         const angles = ["Technical Constraints", "Operational Logic", "Edge Cases", "Structural Limitations", "Failures"];
         const selectedAngles = angles.slice(0, Math.min(synthesis_angles, angles.length));
         
         // Phase 1: 360-Degree Synthesis
         for (let i = 0; i < selectedAngles.length; i++) {
           const angle = selectedAngles[i];
+          if (existingAngles.includes(angle)) {
+            log(`Phase 1 - Angle ${i + 1}: ${angle} already exists on GitHub. Skipping.`);
+            continue;
+          }
           log(`Phase 1 - Injecting Angle ${i + 1}: ${angle}...`);
           
           const teacherSystemPrompt = `You are an elite research professor specializing in ${target_topic}. You are examining text materials from a 360-degree viewpoint. Your answers must be incredibly comprehensive, technically deep, and strictly grounded in the following provided reference text context: ${massive_context}. Do not invent outside facts.`;
@@ -155,6 +250,8 @@ export async function POST(req: NextRequest) {
           const response = await fetchGroq({
             model: "llama-3.3-70b-versatile",
             messages,
+            temperature,
+            top_p
           }, groq_key, log);
         
           const teacherAnswer = response.choices[0].message.content;
@@ -170,7 +267,7 @@ export async function POST(req: NextRequest) {
             logStats();
           }
           
-          const dataStr = JSON.stringify({ messages: [...messages, { role: "assistant", content: teacherAnswer }] });
+          const dataStr = JSON.stringify({ messages: [...messages, { role: "assistant", content: teacherAnswer }], metadata: { phase: 1, angle } });
           await commitToGithub(dataStr, `Append synthesis for angle: ${angle}`, `angle ${angle}`, target_repo, file_path, github_token, log);
           
           log(`Phase 1 - Angle ${i + 1} completed.`);
@@ -182,10 +279,13 @@ export async function POST(req: NextRequest) {
         
         const teacherDebateSystemPrompt = `You are an elite research professor specializing in ${target_topic}. Your answers must be incredibly comprehensive, technically deep, and strictly grounded in the context provided earlier.`;
         
-        const debateHistory: GroqMessage[] = [];
         const debateRounds = 3;
         
         for (let r = 0; r < debateRounds; r++) {
+            if (r < completedDebateRounds) {
+                log(`Phase 2 - Debate Round ${r + 1} already exists on GitHub. Skipping.`);
+                continue;
+            }
             log(`Phase 2 - Debate Round ${r + 1}: Student is processing...`);
             
             const studentMessages = [
@@ -228,7 +328,9 @@ export async function POST(req: NextRequest) {
         
             const teacherResponse = await fetchGroq({
                 model: "llama-3.3-70b-versatile",
-                messages: teacherMessages
+                messages: teacherMessages,
+                temperature,
+                top_p
             }, groq_key, log);
         
             const answer = teacherResponse.choices[0].message.content;
@@ -247,7 +349,7 @@ export async function POST(req: NextRequest) {
             debateHistory.push({ role: "user", content: question });
             debateHistory.push({ role: "assistant", content: answer });
             
-            const dataStr = JSON.stringify({ messages: [...teacherMessages, { role: "assistant", content: answer }] });
+            const dataStr = JSON.stringify({ messages: [...teacherMessages, { role: "assistant", content: answer }], metadata: { phase: 2, round: r + 1 } });
             await commitToGithub(dataStr, `Append debate round ${r + 1}`, `debate round ${r + 1}`, target_repo, file_path, github_token, log);
             
             log(`Phase 2 - Debate Round ${r + 1} completed.`);

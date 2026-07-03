@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity, ChevronDown, Eye, EyeOff } from "lucide-react";
+import { Terminal, Database, Play, Github, Key, FileText, Cpu, BookOpen, Settings, Activity, ChevronDown, Eye, EyeOff, History, Trash2 } from "lucide-react";
 
 const PROMPT_TEMPLATES = [
   {
@@ -28,6 +28,8 @@ export default function SyntheticDataGenerator() {
   const [groqApiKey, setGroqApiKey] = useState("");
   const [githubPat, setGithubPat] = useState("");
   const [githubRepo, setGithubRepo] = useState("");
+  const [synthesisMode, setSynthesisMode] = useState("balanced");
+  const [promptHistory, setPromptHistory] = useState<{id: string, topic: string, context: string, timestamp: string}[]>([]);
 
   const [logs, setLogs] = useState<string[]>(["System ready. Awaiting initialization..."]);
   const [isRunning, setIsRunning] = useState(false);
@@ -50,6 +52,15 @@ export default function SyntheticDataGenerator() {
     setGroqApiKey(localStorage.getItem("synthetic_core_groq_key") || "");
     setGithubPat(localStorage.getItem("synthetic_core_github_pat") || "");
     setGithubRepo(localStorage.getItem("synthetic_core_repo") || "");
+    setSynthesisMode(localStorage.getItem("sdg_synthesis_mode") || "balanced");
+    try {
+      const stored = localStorage.getItem("sdg_prompt_history");
+      if (stored) {
+        setPromptHistory(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to parse prompt history", e);
+    }
     setIsLoaded(true);
   }, []);
 
@@ -61,7 +72,17 @@ export default function SyntheticDataGenerator() {
     localStorage.setItem("synthetic_core_groq_key", groqApiKey);
     localStorage.setItem("synthetic_core_github_pat", githubPat);
     localStorage.setItem("synthetic_core_repo", githubRepo);
-  }, [topic, numAngles, context, groqApiKey, githubPat, githubRepo, isLoaded]);
+    localStorage.setItem("sdg_synthesis_mode", synthesisMode);
+    localStorage.setItem("sdg_prompt_history", JSON.stringify(promptHistory));
+  }, [topic, numAngles, context, groqApiKey, githubPat, githubRepo, synthesisMode, promptHistory, isLoaded]);
+
+  const deleteHistoryItem = (id: string) => {
+    setPromptHistory(prev => prev.filter(item => item.id !== id));
+  };
+
+  const clearHistory = () => {
+    setPromptHistory([]);
+  };
 
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -73,6 +94,29 @@ export default function SyntheticDataGenerator() {
       return;
     }
     
+    // Store in prompt history
+    const existingIndex = promptHistory.findIndex(
+      (h) => h.topic.toLowerCase() === topic.toLowerCase() && h.context === context
+    );
+    let updatedHistory = [...promptHistory];
+    if (existingIndex !== -1) {
+      const item = updatedHistory.splice(existingIndex, 1)[0];
+      item.timestamp = new Date().toLocaleString();
+      updatedHistory = [item, ...updatedHistory];
+    } else {
+      updatedHistory = [
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          topic,
+          context,
+          timestamp: new Date().toLocaleString()
+        },
+        ...updatedHistory.slice(0, 9)
+      ];
+    }
+    setPromptHistory(updatedHistory);
+    localStorage.setItem("sdg_prompt_history", JSON.stringify(updatedHistory));
+
     setIsRunning(true);
     setLogs([`[${new Date().toLocaleTimeString()}]: Validating context volume...`]);
     setStats({
@@ -92,7 +136,8 @@ export default function SyntheticDataGenerator() {
       groq_key: groqApiKey,
       github_token: githubPat,
       target_repo: githubRepo,
-      file_path: targetFile
+      file_path: targetFile,
+      synthesis_mode: synthesisMode
     };
 
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}]: Handshaking API Gateway. Commencing automated loops...`]);
@@ -225,6 +270,64 @@ export default function SyntheticDataGenerator() {
               </div>
             </div>
           </div>
+
+          {/* Prompt History */}
+          <div className="p-4 bg-[#0a0c12] rounded-xl border border-white/5 shadow-2xl relative flex flex-col max-h-[250px]">
+            <div className="absolute -top-px left-10 right-10 h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent"></div>
+            <div className="flex items-center justify-between mb-3 shrink-0">
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest flex items-center gap-2"><History className="w-4 h-4"/> Prompt History</label>
+              {promptHistory.length > 0 && (
+                <button
+                  onClick={clearHistory}
+                  className="text-[10px] text-slate-500 hover:text-red-400 transition-colors flex items-center gap-1 font-mono focus:outline-none"
+                  title="Clear history"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> CLEAR
+                </button>
+              )}
+            </div>
+            
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+              {promptHistory.length === 0 ? (
+                <div className="text-center py-6 text-slate-600 text-xs italic">
+                  No saved history yet
+                </div>
+              ) : (
+                promptHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-2.5 bg-slate-950/60 border border-slate-900 rounded-lg hover:border-cyan-500/30 transition-all group/item flex items-start justify-between gap-2 cursor-pointer"
+                    onClick={() => {
+                      setTopic(item.topic);
+                      setContext(item.context);
+                    }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-bold text-slate-300 truncate group-hover/item:text-cyan-300 transition-colors">
+                        {item.topic}
+                      </h4>
+                      <p className="text-[10px] text-slate-500 truncate font-mono mt-0.5">
+                        {item.context}
+                      </p>
+                      <span className="text-[9px] text-slate-600 font-mono block mt-1">
+                        {item.timestamp}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteHistoryItem(item.id);
+                      }}
+                      className="text-slate-600 hover:text-red-400 transition-colors p-1 rounded opacity-0 group-hover/item:opacity-100 focus:outline-none"
+                      title="Delete entry"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </aside>
         
         <section className="lg:col-span-5 flex flex-col gap-4 h-full">
@@ -273,6 +376,22 @@ export default function SyntheticDataGenerator() {
                   onChange={e => setNumAngles(parseInt(e.target.value) || 1)}
                   className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50"
                 />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Synthesis Mode</label>
+                <div className="relative">
+                  <select
+                    value={synthesisMode}
+                    onChange={e => setSynthesisMode(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-cyan-100 focus:outline-none focus:border-cyan-500/50 appearance-none cursor-pointer hover:bg-slate-900 transition-colors"
+                  >
+                    <option value="exploratory">Exploratory (high temperature)</option>
+                    <option value="balanced">Balanced (medium temperature)</option>
+                    <option value="rigorous">Rigorous (low temperature)</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
               </div>
 
               <div className="h-px bg-white/5 my-2"></div>
