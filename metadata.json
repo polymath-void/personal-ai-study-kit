@@ -1,6 +1,8 @@
 {
-  "name": "Autonomous Dataset Foundry",
-  "description": "A 360-degree synthetic data generation pipeline utilizing Groq models for rapid, self-questioning debate and direct-to-GitHub immutable JSONL storage.",
+  "name": "Context Study Companion",
+  "description": "An AI-powered personalized learning dashboard that extracts insights, interactive mindmaps, and custom study tools from your documents and texts.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

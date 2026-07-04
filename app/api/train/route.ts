@@ -114,7 +114,7 @@ async function fetchGroq(body: GroqPayload, apiKey: string, log?: (msg: string) 
 }
 
 async function commitToGithub(trainingDataStr: string, commitMessage: string, contextMsg: string, githubRepo: string, githubPath: string, githubPat: string, log: (msg: string) => void) {
-  log(`Committing data for ${contextMsg}...`);
+  log(`[GIT_PUSH_START] - Committing data for ${contextMsg}...`);
   const githubApiUrl = `https://api.github.com/repos/${githubRepo}/contents/${githubPath}`;
   
   try {
@@ -158,9 +158,9 @@ async function commitToGithub(trainingDataStr: string, commitMessage: string, co
     if (!putFileRes.ok) {
       throw new Error(`GitHub PUT Error: ${putFileRes.status} - ${await putFileRes.text()}`);
     }
-    log(`Commit successful.`);
+    log(`[GIT_PUSH_SUCCESS] - Commit successful for ${contextMsg}.`);
   } catch (error: any) {
-    log(`Commit failed: ${error.message}`);
+    log(`[GIT_PUSH_FAILED] - Commit failed: ${error.message}`);
     throw error;
   }
 }
@@ -390,6 +390,7 @@ export async function POST(req: NextRequest) {
           }
           
           const dataStr = JSON.stringify({ messages: [...messages, { role: "assistant", content: teacherAnswer }], metadata: { phase: 1, angle } });
+          controller.enqueue(encoder.encode(`data: [ANGLE_LEARNED] - ${JSON.stringify({ angle, topic: target_topic, content: teacherAnswer })}\n\n`));
           await commitToGithub(dataStr, `Append synthesis for angle: ${angle}`, `angle ${angle}`, target_repo, file_path, github_token, log);
           
           log(`Phase 1 - Angle ${i + 1} completed.`);
@@ -483,6 +484,8 @@ export async function POST(req: NextRequest) {
             debateHistory.push({ role: "user", content: question });
             debateHistory.push({ role: "assistant", content: answer });
             
+            controller.enqueue(encoder.encode(`data: [DEBATE_QA_LEARNED] - ${JSON.stringify({ round: r + 1, topic: target_topic, question, answer })}\n\n`));
+
             const dataStr = JSON.stringify({ messages: [...teacherMessages, { role: "assistant", content: answer }], metadata: { phase: 2, round: r + 1 } });
             await commitToGithub(dataStr, `Append debate round ${r + 1}`, `debate round ${r + 1}`, target_repo, file_path, github_token, log);
             

@@ -1,8 +1,8 @@
 @import "tailwindcss";
+
 @layer base {
-  html, body {
-    height: 100%;
-    margin: 0;
-    overflow: hidden;
+  body {
+    background-color: rgb(248 250 252);
+    color: rgb(15 23 42);
   }
 }
