@@ -1,6 +1,6 @@
 {
   "name": "Autonomous Dataset Foundry",
-  "description": "An automated system for creating and synthesizing high-quality deep-instruction training datasets, featuring real-time debate analysis and comprehensive state tracking.",
+  "description": "A 360-degree synthetic data generation pipeline utilizing Groq models for rapid, self-questioning debate and direct-to-GitHub immutable JSONL storage.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
