@@ -1,0 +1,8 @@
+{
+  "name": "Context Study Companion",
+  "description": "An AI-powered personalized learning dashboard that extracts insights, interactive mindmaps, and custom study tools from your documents and texts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

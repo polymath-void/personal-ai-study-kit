@@ -1,0 +1,28 @@
+{
+  "collections": {
+    "telemetry": {
+      "documents": {
+        "global_state": {
+          "fields": {
+            "guardState": {
+              "type": "map",
+              "description": "The current state of the data monitoring guard containing all topic completion metrics, QA logs, and Git pushes"
+            },
+            "stats": {
+              "type": "map",
+              "description": "Cumulative analytics tracking execution API calls, tokens, costs, and data completions"
+            },
+            "promptHistory": {
+              "type": "array",
+              "description": "Dynamic history of optimized prompt context records"
+            },
+            "updatedAt": {
+              "type": "timestamp",
+              "description": "Last synchronization timestamp"
+            }
+          }
+        }
+      }
+    }
+  }
+}
