@@ -220,7 +220,7 @@ export default function ContextDashboard({
                   type="button"
                   onClick={() => {
                     const modifier = "\n\n[SCHEMA] Formulate a rigorous JSON or typed structural schema outlining expected formats, mandatory fields, and nesting hierarchies.";
-                    setRawIdea(prev => prev.trim() ? prev + modifier : "Specify the output schema and expected format rules (such as JSON, CSV, or strict schemas) for...");
+                    setRawIdea((prev: string) => prev.trim() ? prev + modifier : "Specify the output schema and expected format rules (such as JSON, CSV, or strict schemas) for...");
                   }}
                   className="text-[9px] px-2.5 py-1 bg-slate-900/80 hover:bg-cyan-950 text-slate-400 hover:text-cyan-300 border border-slate-800/60 hover:border-cyan-800/40 rounded-lg font-mono uppercase transition-all duration-200 cursor-pointer flex items-center gap-1"
                 >
